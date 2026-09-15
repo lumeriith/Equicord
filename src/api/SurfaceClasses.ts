@@ -36,6 +36,7 @@ export interface SurfaceProvidedProps {
     [dataAttribute: `data-${string}`]: string | undefined;
     onFocusCapture?: FocusEventHandler<HTMLElement>;
     onBlurCapture?: FocusEventHandler<HTMLElement>;
+    onAuxClickCapture?: MouseEventHandler<HTMLElement>;
     onMouseDownCapture?: MouseEventHandler<HTMLElement>;
     onMouseOverCapture?: MouseEventHandler<HTMLElement>;
     onMouseOutCapture?: MouseEventHandler<HTMLElement>;
@@ -105,6 +106,8 @@ function mergeSurfaceProvidedProps(target: SurfaceProvidedProps, source: Surface
     if (onFocusCapture) target.onFocusCapture = onFocusCapture;
     const onBlurCapture = chainHandlers(target.onBlurCapture, source.onBlurCapture);
     if (onBlurCapture) target.onBlurCapture = onBlurCapture;
+    const onAuxClickCapture = chainHandlers(target.onAuxClickCapture, source.onAuxClickCapture);
+    if (onAuxClickCapture) target.onAuxClickCapture = onAuxClickCapture;
     const onMouseDownCapture = chainHandlers(target.onMouseDownCapture, source.onMouseDownCapture);
     if (onMouseDownCapture) target.onMouseDownCapture = onMouseDownCapture;
     const onMouseOverCapture = chainHandlers(target.onMouseOverCapture, source.onMouseOverCapture);

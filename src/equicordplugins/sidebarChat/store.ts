@@ -20,6 +20,11 @@ export const settings = definePluginSettings({
         description: "Keep the sidebar chat open across Discord restarts",
         default: true,
     },
+    middleClickPopout: {
+        type: OptionType.BOOLEAN,
+        description: "Open channels, threads, and direct messages in popouts with middle click.",
+        default: true,
+    },
     persistPopoutWindows: {
         type: OptionType.BOOLEAN,
         description: "Restore open popout chats after Discord restarts.",

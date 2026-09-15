@@ -6,12 +6,13 @@
 
 import { NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { HeaderBarButton } from "@api/HeaderBar";
+import { addSurfacePropsProvider, type SurfaceProvidedProps } from "@api/SurfaceClasses";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs, EquicordDevs } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
 import { getCurrentChannel } from "@utils/discord";
 import definePlugin from "@utils/types";
-import { Channel, Guild, User } from "@vencord/discord-types";
+import { type BrowserWindowFeatures, Channel, Guild, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import {
     extractAndLoadChunksLazy,
@@ -44,11 +45,23 @@ import {
     useState,
     useStateFromStores,
 } from "@webpack/common";
+import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { getOpenPopoutWindowKeys, getPersistedPopoutChannelIds, getPopoutWindowKey, isPopoutWindowOpen, settings, SidebarStore, syncPersistedPopoutWindows } from "./store";
 import style from "./styles.css?managed";
 
 const cl = classNameFactory("vc-sidebar-chat-");
+const MIDDLE_CLICK = 1;
+const POPOUT_FEATURES = {
+    defaultWidth: 854,
+    defaultHeight: 480,
+    ...(IS_EQUIBOP && {
+        frame: true,
+        movable: true,
+        resizable: true,
+        skipTaskbar: false,
+    }),
+} satisfies BrowserWindowFeatures;
 
 const HeaderBar = findComponentByCodeLazy("toolbarClassName:", "}),onDoubleClick:");
 const ForumView = findComponentByCodeLazy("sidebarState");
@@ -110,6 +123,59 @@ function canOpenPopout(channel: Channel) {
     return !channel.isCategory() && !channel.isDirectory();
 }
 
+function getMiddleClickChannel(event: ReactMouseEvent<HTMLElement>) {
+    if (!settings.plain.middleClickPopout || event.button !== MIDDLE_CLICK) return null;
+
+    let routeChannelId: string | null = null;
+    let listChannelId: string | null = null;
+    let isMessageLink = false;
+
+    for (const target of event.nativeEvent.composedPath()) {
+        if (!(target instanceof HTMLElement)) continue;
+
+        const listItemId = target.getAttribute("data-list-item-id") ?? target.id;
+        isMessageLink ||= listItemId.startsWith("chat-messages___");
+
+        if (/^(?:channels___|private-channels-uid___)/.test(listItemId)) {
+            listChannelId ??= listItemId.match(/\d+/g)?.at(-1) ?? null;
+        }
+
+        if (target instanceof HTMLAnchorElement) {
+            const [, channelId] = /^\/channels\/(?:@me|\d+)\/(\d+)\/?$/.exec(target.pathname) ?? [];
+            routeChannelId ??= channelId ?? null;
+        }
+    }
+
+    const channel = ChannelStore.getChannel(routeChannelId ?? listChannelId ?? "");
+    if (!channel || !canOpenPopout(channel)) return null;
+    if (!listChannelId && (!channel.isThread() || isMessageLink)) return null;
+
+    return channel;
+}
+
+function handleChannelMiddleClick(event: ReactMouseEvent<HTMLElement>, channel: Channel | null | undefined) {
+    if (!settings.plain.middleClickPopout || event.button !== MIDDLE_CLICK || !channel || !canOpenPopout(channel)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.nativeEvent.stopImmediatePropagation();
+
+    if (event.type === "mousedown") openOrFocusPopout(channel.id);
+}
+
+function handleMiddleClick(event: ReactMouseEvent<HTMLElement>) {
+    handleChannelMiddleClick(event, getMiddleClickChannel(event));
+}
+
+const middleClickSurfaceProps = {
+    onAuxClickCapture: handleMiddleClick,
+    onMouseDownCapture: handleMiddleClick,
+} satisfies SurfaceProvidedProps;
+
+function provideMiddleClickSurfaceProps() {
+    return middleClickSurfaceProps;
+}
+
 function getMainChatChannelId() {
     const channelId = SelectedChannelStore.getChannelId();
     const sidebar = ChannelSectionStore.getSidebarState(channelId);
@@ -124,6 +190,7 @@ function getPopoutMenuLabel(channelId: string) {
 
 let restorePersistedPopoutsInterval: number | null = null;
 let restoringPersistedPopouts = false;
+let removeMiddleClickSurfaceProps: (() => void) | null = null;
 
 function clearPersistedPopoutRestoreLoop() {
     restoringPersistedPopouts = false;
@@ -182,32 +249,37 @@ function closePopout(channelId: string, syncPersistence = true) {
     }
 }
 
-function openPopout(channelId: string, syncPersistence = true) {
-    const channel = ChannelStore.getChannel(channelId);
-    if (!channel || !canOpenPopout(channel)) return;
-
-    const windowKey = getPopoutWindowKey(channelId);
-
-    if (isPopoutWindowOpen(channelId)) {
-        closePopout(channelId, syncPersistence);
-        return;
-    }
-
+function showPopout(channel: Channel, syncPersistence = true) {
+    const windowKey = getPopoutWindowKey(channel.id);
     const title = getChannelTitle(channel);
 
     PopoutActions.open(
         windowKey,
         () => <RenderPopout channel={channel} name={title} windowKey={windowKey} />,
-        {
-            defaultWidth: 854,
-            defaultHeight: 480,
-        }
+        POPOUT_FEATURES
     );
 
     PopoutActions.setAlwaysOnTop(windowKey, settings.store.popoutAlwaysOnTop);
     if (syncPersistence && !restoringPersistedPopouts) {
         syncPersistedPopoutWindows();
     }
+}
+
+function openPopout(channelId: string, syncPersistence = true) {
+    const channel = ChannelStore.getChannel(channelId);
+    if (!channel || !canOpenPopout(channel)) return;
+
+    if (isPopoutWindowOpen(channelId)) {
+        closePopout(channelId, syncPersistence);
+        return;
+    }
+
+    showPopout(channel, syncPersistence);
+}
+
+function openOrFocusPopout(channelId: string) {
+    const channel = ChannelStore.getChannel(channelId);
+    if (channel && canOpenPopout(channel)) showPopout(channel);
 }
 
 function restorePersistedPopouts() {
@@ -315,7 +387,7 @@ export default definePlugin({
     authors: [Devs.Joona, EquicordDevs.justjxke],
     description: "Open a channel or DM as a sidebar or a popout.",
     tags: ["Appearance", "Chat", "Servers"],
-    dependencies: ["HeaderBarAPI"],
+    dependencies: ["HeaderBarAPI", "SurfaceClassesAPI"],
     patches: [
         {
             find: 'case"pendingFriends":',
@@ -330,6 +402,13 @@ export default definePlugin({
                     replace: "[$&,vc_SidebarChat]"
                 },
             ],
+        },
+        {
+            find: "POPOUT)},children:",
+            replacement: {
+                match: /(?<=getUser\(\i\.ownerId\).{0,100})className:\i\.\i,onClick:function\(\i\)\{\(0,\i\.\i\)\(\i,/,
+                replace: "onMouseDownCapture:e=>$self.handleChannelMiddleClick(e,arguments[0].thread),onAuxClickCapture:e=>$self.handleChannelMiddleClick(e,arguments[0].thread),$&"
+            }
         },
         {
             find: "loadComplete: resetting state for channelId=",
@@ -375,6 +454,8 @@ export default definePlugin({
     },
 
     stop() {
+        removeMiddleClickSurfaceProps?.();
+        removeMiddleClickSurfaceProps = null;
         clearPersistedPopoutRestoreLoop();
         syncPersistedPopoutWindows();
         for (const windowKey of getOpenPopoutWindowKeys()) {
@@ -382,8 +463,13 @@ export default definePlugin({
         }
     },
 
-    async start() {
+    start() {
+        removeMiddleClickSurfaceProps = addSurfacePropsProvider("base", provideMiddleClickSurfaceProps);
         restorePersistedPopouts();
+    },
+
+    handleChannelMiddleClick(event: ReactMouseEvent<HTMLElement>, channel: Channel) {
+        handleChannelMiddleClick(event, channel);
     },
 
     hasMultipleChatViews(channelId: string) {
@@ -553,7 +639,7 @@ const RenderPopout = ErrorBoundary.wrap(({ channel, name, windowKey }: { channel
 
     return (
         <PopoutWindow
-            withTitleBar
+            withTitleBar={!IS_EQUIBOP}
             windowKey={windowKey}
             title={name || "Equicord"}
             channelId={channel.id}
