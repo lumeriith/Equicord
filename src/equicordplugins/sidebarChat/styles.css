@@ -17,3 +17,10 @@
     background-color: var(--background-primary);
     color: var(--text-default);
 }
+
+.vc-sidebar-chat-title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

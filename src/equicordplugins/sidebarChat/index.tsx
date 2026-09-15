@@ -11,7 +11,7 @@ import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs, EquicordDevs } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
 import { getCurrentChannel } from "@utils/discord";
-import definePlugin from "@utils/types";
+import definePlugin, { type PluginNative } from "@utils/types";
 import { type BrowserWindowFeatures, Channel, Guild, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import {
@@ -38,6 +38,9 @@ import {
     RelationshipStore,
     SelectedChannelStore,
     SelectedGuildStore,
+    showToast,
+    Text,
+    Toasts,
     useCallback,
     useEffect,
     useLayoutEffect,
@@ -52,16 +55,15 @@ import style from "./styles.css?managed";
 
 const cl = classNameFactory("vc-sidebar-chat-");
 const MIDDLE_CLICK = 1;
-const POPOUT_FEATURES = {
-    defaultWidth: 854,
-    defaultHeight: 480,
-    ...(IS_EQUIBOP && {
-        frame: true,
-        movable: true,
-        resizable: true,
-        skipTaskbar: false,
-    }),
-} satisfies BrowserWindowFeatures;
+const MAXIMIZED_POPOUT_WIDTH = 1200;
+const MAXIMIZED_POPOUT_HEIGHT = 700;
+const MAXIMIZED_POPOUT_SCREEN_RATIO = 0.8;
+const MAXIMIZED_WINDOW_TOLERANCE = 16;
+const handledMiddleClicks = new WeakSet<MouseEvent>();
+
+const Native = IS_EQUIBOP
+    ? VencordNative.pluginHelpers.SidebarChat as PluginNative<typeof import("./native")> | undefined
+    : undefined;
 
 const HeaderBar = findComponentByCodeLazy("toolbarClassName:", "}),onDoubleClick:");
 const ForumView = findComponentByCodeLazy("sidebarState");
@@ -118,9 +120,45 @@ function getChannelTitle(channel: Channel | null | undefined) {
     return channel.name || "Chat";
 }
 
+function getPopoutTitle(channel: Channel) {
+    const channelTitle = getChannelTitle(channel);
+    if (channel.isPrivate()) return channelTitle;
+
+    const guildName = GuildStore.getGuild(channel.guild_id)?.name;
+    return guildName ? `${guildName} — ${channelTitle}` : channelTitle;
+}
+
 function canOpenPopout(channel: Channel) {
     if (channel.isPrivate()) return true;
     return !channel.isCategory() && !channel.isDirectory();
+}
+
+function shouldUseDiscordTitleBar() {
+    return IS_EQUIBOP && VesktopNative.settings.get().nativeTitleBar === false;
+}
+
+function getPopoutFeatures() {
+    const { availWidth, availHeight } = window.screen;
+    const mainWindowIsMaximized = window.outerWidth >= availWidth - MAXIMIZED_WINDOW_TOLERANCE
+        && window.outerHeight >= availHeight - MAXIMIZED_WINDOW_TOLERANCE;
+
+    const defaultWidth = mainWindowIsMaximized
+        ? Math.min(MAXIMIZED_POPOUT_WIDTH, Math.floor(availWidth * MAXIMIZED_POPOUT_SCREEN_RATIO))
+        : window.outerWidth;
+    const defaultHeight = mainWindowIsMaximized
+        ? Math.min(MAXIMIZED_POPOUT_HEIGHT, Math.floor(availHeight * MAXIMIZED_POPOUT_SCREEN_RATIO))
+        : window.outerHeight;
+
+    return {
+        defaultWidth,
+        defaultHeight,
+        ...(IS_EQUIBOP && {
+            frame: !shouldUseDiscordTitleBar(),
+            movable: true,
+            resizable: true,
+            skipTaskbar: false,
+        }),
+    } satisfies BrowserWindowFeatures;
 }
 
 function getMiddleClickChannel(event: ReactMouseEvent<HTMLElement>) {
@@ -128,13 +166,11 @@ function getMiddleClickChannel(event: ReactMouseEvent<HTMLElement>) {
 
     let routeChannelId: string | null = null;
     let listChannelId: string | null = null;
-    let isMessageLink = false;
 
     for (const target of event.nativeEvent.composedPath()) {
         if (!(target instanceof HTMLElement)) continue;
 
         const listItemId = target.getAttribute("data-list-item-id") ?? target.id;
-        isMessageLink ||= listItemId.startsWith("chat-messages___");
 
         if (/^(?:channels___|private-channels-uid___)/.test(listItemId)) {
             listChannelId ??= listItemId.match(/\d+/g)?.at(-1) ?? null;
@@ -148,23 +184,36 @@ function getMiddleClickChannel(event: ReactMouseEvent<HTMLElement>) {
 
     const channel = ChannelStore.getChannel(routeChannelId ?? listChannelId ?? "");
     if (!channel || !canOpenPopout(channel)) return null;
-    if (!listChannelId && (!channel.isThread() || isMessageLink)) return null;
+    if (!listChannelId && !channel.isThread() && !channel.isPrivate()) return null;
 
     return channel;
+}
+
+function consumeMiddleClick(event: ReactMouseEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.nativeEvent.stopImmediatePropagation();
+
+    if (event.type !== "mousedown" || handledMiddleClicks.has(event.nativeEvent)) return false;
+    handledMiddleClicks.add(event.nativeEvent);
+
+    return true;
 }
 
 function handleChannelMiddleClick(event: ReactMouseEvent<HTMLElement>, channel: Channel | null | undefined) {
     if (!settings.plain.middleClickPopout || event.button !== MIDDLE_CLICK || !channel || !canOpenPopout(channel)) return;
 
-    event.preventDefault();
-    event.stopPropagation();
-    event.nativeEvent.stopImmediatePropagation();
-
-    if (event.type === "mousedown") openOrFocusPopout(channel.id);
+    if (consumeMiddleClick(event)) openOrFocusPopout(channel.id);
 }
 
 function handleMiddleClick(event: ReactMouseEvent<HTMLElement>) {
     handleChannelMiddleClick(event, getMiddleClickChannel(event));
+}
+
+function handleUserMiddleClick(event: ReactMouseEvent<HTMLElement>, userId: string) {
+    if (!settings.plain.middleClickPopout || event.button !== MIDDLE_CLICK) return;
+
+    if (consumeMiddleClick(event)) void openOrFocusPopoutFromUser(userId);
 }
 
 const middleClickSurfaceProps = {
@@ -224,21 +273,32 @@ async function waitForDmChannel(userId: string, timeoutMs = 2500) {
     return null;
 }
 
-async function openPopoutFromUserMenu(userId: string) {
+async function resolveDmChannel(userId: string) {
+    const existingChannelId = ChannelStore.getDMFromUserId?.(userId);
+    if (existingChannelId) return await waitForChannel(existingChannelId);
+
     try {
         const channelId = await Promise.resolve(ChannelActionCreators.getOrEnsurePrivateChannel(userId));
-        if (!channelId) return;
+        if (!channelId) {
+            const fallbackChannelId = await waitForDmChannel(userId);
+            return fallbackChannelId ? await waitForChannel(fallbackChannelId) : null;
+        }
 
-        const channel = await waitForChannel(channelId);
-        if (channel) openPopout(channel.id);
-        return;
+        return await waitForChannel(channelId);
     } catch {
         const fallbackChannelId = await waitForDmChannel(userId);
-        if (!fallbackChannelId) return;
-
-        const channel = await waitForChannel(fallbackChannelId);
-        if (channel) openPopout(channel.id);
+        return fallbackChannelId ? await waitForChannel(fallbackChannelId) : null;
     }
+}
+
+async function openPopoutFromUserMenu(userId: string) {
+    const channel = await resolveDmChannel(userId);
+    if (channel) openPopout(channel.id);
+}
+
+async function openOrFocusPopoutFromUser(userId: string) {
+    const channel = await resolveDmChannel(userId);
+    if (channel) openOrFocusPopout(channel.id);
 }
 
 function closePopout(channelId: string, syncPersistence = true) {
@@ -251,12 +311,12 @@ function closePopout(channelId: string, syncPersistence = true) {
 
 function showPopout(channel: Channel, syncPersistence = true) {
     const windowKey = getPopoutWindowKey(channel.id);
-    const title = getChannelTitle(channel);
+    const title = getPopoutTitle(channel);
 
     PopoutActions.open(
         windowKey,
         () => <RenderPopout channel={channel} name={title} windowKey={windowKey} />,
-        POPOUT_FEATURES
+        getPopoutFeatures()
     );
 
     PopoutActions.setAlwaysOnTop(windowKey, settings.store.popoutAlwaysOnTop);
@@ -277,9 +337,37 @@ function openPopout(channelId: string, syncPersistence = true) {
     showPopout(channel, syncPersistence);
 }
 
+function focusPopout(channel: Channel) {
+    const windowKey = getPopoutWindowKey(channel.id);
+    const popoutWindow = PopoutWindowStore.getWindow(windowKey);
+    if (!popoutWindow || popoutWindow.closed) return false;
+
+    if (!IS_EQUIBOP) {
+        popoutWindow.focus();
+        return true;
+    }
+
+    if (Native) {
+        void Native.focusPopout(windowKey, getPopoutTitle(channel)).then(focused => {
+            if (!focused && !popoutWindow.closed) {
+                popoutWindow.focus();
+                showToast("Could not find the native popout window.", Toasts.Type.FAILURE);
+            }
+        });
+    } else {
+        popoutWindow.focus();
+    }
+
+    return true;
+}
+
 function openOrFocusPopout(channelId: string) {
     const channel = ChannelStore.getChannel(channelId);
-    if (channel && canOpenPopout(channel)) showPopout(channel);
+    if (!channel || !canOpenPopout(channel)) return;
+
+    if (focusPopout(channel)) return;
+
+    showPopout(channel);
 }
 
 function restorePersistedPopouts() {
@@ -411,6 +499,41 @@ export default definePlugin({
             }
         },
         {
+            find: "ThreadMessageAccessoryMessage",
+            replacement: {
+                match: /onClick:function\((\i)\)\{\1\.stopPropagation\(\),\(0,\i\.\i\)\((\i),\1\.shiftKey\)\}(?=,onKeyDown:function)/,
+                replace: "onMouseDownCapture:e=>$self.handleChannelMiddleClick(e,$2),onAuxClickCapture:e=>$self.handleChannelMiddleClick(e,$2),$&"
+            }
+        },
+        {
+            find: "Missing guestWindow reference",
+            predicate: () => IS_EQUIBOP,
+            replacement: [
+                {
+                    match: /(?<=withTitleBar:(\i),isFullScreen:(\i)}=\i;return )\1&&(\i)\.isPlatformEmbedded&&!\2/,
+                    replace: "$1&&($3.isPlatformEmbedded||$self.shouldUseDiscordTitleBar())&&!$2"
+                },
+                {
+                    match: /(?<=children:\i=>\(0,\i\.jsx\)\(\i\.cq,\{windowKey:\i,)className:/,
+                    replace: "title:this.props.titleBarTitle,$&"
+                }
+            ]
+        },
+        {
+            find: "PrivateChannel.renderAvatar: Invalid prop configuration - no user or channel",
+            replacement: {
+                match: /\.CHANNEL\(\i\.\i,\i\.\i\),(?=.{0,150}\.isMultiUserDM\(\))/,
+                replace: "$&onMouseDownCapture:e=>$self.handleChannelMiddleClick(e,arguments[0].channel),onAuxClickCapture:e=>$self.handleChannelMiddleClick(e,arguments[0].channel),"
+            }
+        },
+        {
+            find: "handleMouseEnter=()=>{let{isFocused:",
+            replacement: {
+                match: /onContextMenu:(\i)=>this\.handleContextMenu\(\1,(\i)\),onMouseEnter:/g,
+                replace: "onMouseDownCapture:e=>$self.handleUserMiddleClick(e,$2.id),onAuxClickCapture:e=>$self.handleUserMiddleClick(e,$2.id),$&"
+            }
+        },
+        {
             find: "loadComplete: resetting state for channelId=",
             group: true,
             replacement: [
@@ -471,6 +594,12 @@ export default definePlugin({
     handleChannelMiddleClick(event: ReactMouseEvent<HTMLElement>, channel: Channel) {
         handleChannelMiddleClick(event, channel);
     },
+
+    handleUserMiddleClick(event: ReactMouseEvent<HTMLElement>, userId: string) {
+        handleUserMiddleClick(event, userId);
+    },
+
+    shouldUseDiscordTitleBar,
 
     hasMultipleChatViews(channelId: string) {
         const mainChannelId = SelectedChannelStore.getChannelId();
@@ -629,6 +758,10 @@ const RenderPopout = ErrorBoundary.wrap(({ channel, name, windowKey }: { channel
     // Copy from an unexported function of the one they use in the experiment
     // right click a channel and search withTitleBar:!0,windowKey
     useEffect(() => {
+        if (IS_EQUIBOP) void Native?.focusPopout(windowKey, name);
+    }, [name, windowKey]);
+
+    useEffect(() => {
         if (!channel?.id || MessageStore.getLastMessage(channel.id)) return;
 
         MessageActions.fetchMessages({
@@ -639,10 +772,20 @@ const RenderPopout = ErrorBoundary.wrap(({ channel, name, windowKey }: { channel
 
     return (
         <PopoutWindow
-            withTitleBar={!IS_EQUIBOP}
+            withTitleBar={!IS_EQUIBOP || shouldUseDiscordTitleBar()}
             windowKey={windowKey}
             title={name || "Equicord"}
+            titleBarTitle={
+                <Text className={cl("title")} variant="text-sm/medium" color="text-default">
+                    {name}
+                </Text>
+            }
             channelId={channel.id}
+            keybinds={[{
+                action: () => closePopout(channel.id),
+                binds: ["mod+w"],
+                comboKeysBindGlobal: true,
+            }]}
         >
             <div className={cl("window")}>
                 {channel.isGuildVocal()
