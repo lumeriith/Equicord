@@ -60,6 +60,7 @@ const MAXIMIZED_POPOUT_HEIGHT = 700;
 const MAXIMIZED_POPOUT_SCREEN_RATIO = 0.8;
 const MAXIMIZED_WINDOW_TOLERANCE = 16;
 const handledMiddleClicks = new WeakSet<MouseEvent>();
+let threadSidebarOwnerWindow: Window | null = null;
 
 const Native = IS_EQUIBOP
     ? VencordNative.pluginHelpers.SidebarChat as PluginNative<typeof import("./native")> | undefined
@@ -502,7 +503,14 @@ export default definePlugin({
             find: "ThreadMessageAccessoryMessage",
             replacement: {
                 match: /onClick:function\((\i)\)\{\1\.stopPropagation\(\),\(0,\i\.\i\)\((\i),\1\.shiftKey\)\}(?=,onKeyDown:function)/,
-                replace: "onMouseDownCapture:e=>$self.handleChannelMiddleClick(e,$2),onAuxClickCapture:e=>$self.handleChannelMiddleClick(e,$2),$&"
+                replace: "onClickCapture:e=>$self.setThreadSidebarOwner(e),onMouseDownCapture:e=>$self.handleChannelMiddleClick(e,$2),onAuxClickCapture:e=>$self.handleChannelMiddleClick(e,$2),$&"
+            }
+        },
+        {
+            find: "showFollowButton:",
+            replacement: {
+                match: /(hasModalOpen:\i,section:\i,)channelSidebarState:(\i),guildSidebarState:(\i)(?=,guild:)/,
+                replace: "$1channelSidebarState:$self.shouldRenderPopoutThreadSidebar(arguments[0].vcSidebarChatWindowKey,$2)?$2:null,guildSidebarState:$3"
             }
         },
         {
@@ -611,6 +619,17 @@ export default definePlugin({
 
     requestPopoutFrame(channelId: string) {
         if (isPopoutWindowOpen(channelId)) requestAnimationFrame(() => { });
+    },
+
+    setThreadSidebarOwner(event: ReactMouseEvent<HTMLElement>) {
+        threadSidebarOwnerWindow = event.currentTarget.ownerDocument.defaultView;
+    },
+
+    shouldRenderPopoutThreadSidebar(windowKey: string | undefined, sidebarState: unknown) {
+        if (!sidebarState) threadSidebarOwnerWindow = null;
+        return !windowKey
+            || !threadSidebarOwnerWindow
+            || threadSidebarOwnerWindow === PopoutWindowStore.getWindow(windowKey);
     },
 
     hasMultipleChatViews(channelId: string) {
@@ -802,7 +821,7 @@ const RenderPopout = ErrorBoundary.wrap(({ channel, name, windowKey }: { channel
             <div className={cl("window")}>
                 {channel.isGuildVocal()
                     ? <Chat channel={channel} guild={GuildStore.getGuild(channel.guild_id)} chatInputType={ChatInputTypes.NORMAL} />
-                    : <FullChannelView providedChannel={channel} />}
+                    : <FullChannelView providedChannel={channel} vcSidebarChatWindowKey={windowKey} />}
             </div>
         </PopoutWindow>
     );
