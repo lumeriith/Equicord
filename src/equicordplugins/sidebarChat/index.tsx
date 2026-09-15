@@ -534,6 +534,13 @@ export default definePlugin({
             }
         },
         {
+            find: "handleTextareaChange=",
+            replacement: {
+                match: /(handleTextareaChange=.{0,200}?if\(\i===\i\.\i\.NORMAL&&)(\i)(!==\i\.\i\.getChannelId\(\))\)return;/,
+                replace: "$1$2$3&&!$self.isPopoutWindowOpen($2))return;$self.requestPopoutFrame($2);"
+            }
+        },
+        {
             find: "loadComplete: resetting state for channelId=",
             group: true,
             replacement: [
@@ -600,6 +607,11 @@ export default definePlugin({
     },
 
     shouldUseDiscordTitleBar,
+    isPopoutWindowOpen,
+
+    requestPopoutFrame(channelId: string) {
+        if (isPopoutWindowOpen(channelId)) requestAnimationFrame(() => { });
+    },
 
     hasMultipleChatViews(channelId: string) {
         const mainChannelId = SelectedChannelStore.getChannelId();
