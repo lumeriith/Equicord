@@ -626,7 +626,7 @@ export default definePlugin({
     },
 
     shouldRenderPopoutThreadSidebar(windowKey: string | undefined, sidebarState: unknown) {
-        if (!sidebarState) threadSidebarOwnerWindow = null;
+        if (!sidebarState) return true;
         return !windowKey
             || !threadSidebarOwnerWindow
             || threadSidebarOwnerWindow === PopoutWindowStore.getWindow(windowKey);
