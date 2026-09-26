@@ -42,17 +42,28 @@
     box-sizing: border-box;
     max-width: 100%;
     max-height: 60vh;
-    padding: 8px 12px;
+    padding: 0;
     overflow: auto;
-    border: 1px solid var(--background-modifier-accent);
-    border-radius: 4px;
-    background: var(--background-secondary);
     color: var(--text-normal);
     font-size: 0.875rem;
     line-height: 1.25rem;
 
     /* Keeps panel layout and painting from leaking into the message list. */
     contain: content;
+}
+
+/* Older sealed panels used ordered lists. Flatten those into ordinary lines;
+ * new panels use div rows and need no row-specific styling. */
+.vc-lufria-panel-body :where(ol, ul) {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.vc-lufria-panel-body li {
+    margin: 0;
+    padding: 0;
+    list-style: none;
 }
 
 .vc-lufria-panel-body table {
