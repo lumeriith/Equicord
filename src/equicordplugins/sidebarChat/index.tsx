@@ -253,10 +253,6 @@ function getMainChatChannelId() {
         : channelId;
 }
 
-function getPopoutMenuLabel(channelId: string) {
-    return isPopoutWindowOpen(channelId) ? "Close popout chat" : "Popout chat";
-}
-
 let restorePersistedPopoutsInterval: number | null = null;
 let restoringPersistedPopouts = false;
 let removeMiddleClickSurfaceProps: (() => void) | null = null;
@@ -309,11 +305,6 @@ async function resolveDmChannel(userId: string) {
         const fallbackChannelId = await waitForDmChannel(userId);
         return fallbackChannelId ? await waitForChannel(fallbackChannelId) : null;
     }
-}
-
-async function openPopoutFromUserMenu(userId: string) {
-    const channel = await resolveDmChannel(userId);
-    if (channel) openPopout(channel.id);
 }
 
 async function openOrFocusPopoutFromUser(userId: string) {
@@ -439,40 +430,13 @@ const createSidebarChatContextMenuItem = (id: string, guildId: string | null) =>
     );
 };
 
-const createPopoutChatContextMenuItem = (id: string, label: string, action: () => void | Promise<void>) => {
-    return (
-        <Menu.MenuItem
-            id={`vc-sidebar-chat-popout-${id}`}
-            label={label}
-            action={() => {
-                void action();
-            }}
-        />
-    );
-};
-
 const UserContextPatch: NavContextMenuPatchCallback = (children, args: { user: User; }) => {
     const checks = [
         args.user,
         args.user.id !== UserStore.getCurrentUser().id,
     ];
     if (checks.some(check => !check)) return;
-    const channelId = ChannelStore.getDMFromUserId?.(args.user.id) ?? null;
-    const isOpen = channelId ? isPopoutWindowOpen(channelId) : false;
-
     children.push(createSidebarChatContextMenuItem(args.user.id, null));
-    children.push(createPopoutChatContextMenuItem(
-        args.user.id,
-        isOpen ? "Close popout chat" : "Popout chat",
-        () => {
-            if (channelId && isOpen) {
-                closePopout(channelId);
-                return;
-            }
-
-            return openPopoutFromUserMenu(args.user.id);
-        }
-    ));
 };
 
 const ChannelContextPatch: NavContextMenuPatchCallback = (children, args: { channel: Channel; }) => {
@@ -483,11 +447,6 @@ const ChannelContextPatch: NavContextMenuPatchCallback = (children, args: { chan
     ];
     if (checks.some(check => !check)) return;
     children.push(createSidebarChatContextMenuItem(args.channel.id, args.channel.guild_id));
-    children.push(createPopoutChatContextMenuItem(
-        args.channel.id,
-        getPopoutMenuLabel(args.channel.id),
-        () => openPopout(args.channel.id)
-    ));
 };
 
 export default definePlugin({
@@ -755,13 +714,6 @@ const Header = ({ guild, channel }: { guild: Guild; channel: Channel; }) => {
 
     const closeSidebar = () => FluxDispatcher.dispatch({ type: "VC_SIDEBAR_CHAT_CLOSE", });
 
-    const isPopoutOpen = useStateFromStores(
-        [PopoutWindowStore], () => isPopoutWindowOpen(channel.id),
-        [channel.id]
-    );
-
-    const openPopoutClick = useCallback(() => openPopout(channel.id), [channel.id]);
-
     const switchChannels = useCallback(() => {
         const mainChannel = getCurrentChannel()!;
         FluxDispatcher.dispatch({
@@ -778,13 +730,6 @@ const Header = ({ guild, channel }: { guild: Guild; channel: Channel; }) => {
             toolbar={
                 <>
                     <HeaderBarButton icon={ArrowsLeftRightIcon} tooltip="Switch channels" onClick={switchChannels} />
-                    <HeaderBarButton
-                        key={`${channel.id}-${isPopoutOpen ? "open" : "closed"}`}
-                        icon={isPopoutOpen ? XSmallIcon : WindowLaunchIcon}
-                        tooltip={isPopoutOpen ? "Close popout chat" : "Popout chat"}
-                        selected={isPopoutOpen}
-                        onClick={openPopoutClick}
-                    />
                     <HeaderBarButton icon={XSmallIcon} tooltip="Close Sidebar Chat" onClick={closeSidebar} />
                 </>
             }
