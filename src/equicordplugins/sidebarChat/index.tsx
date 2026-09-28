@@ -602,12 +602,7 @@ export default definePlugin({
 
     headerBarButton: {
         icon: WindowLaunchIcon,
-        render: () => (
-            <>
-                <PopoutPersistenceSync />
-                <WrappedPopoutHeaderButton />
-            </>
-        )
+        render: () => <PopoutPersistenceSync />
     },
 
     stop() {
@@ -845,40 +840,6 @@ const RenderPopout = ErrorBoundary.wrap(({ channel, name, windowKey }: { channel
         </PopoutWindow>
     );
 });
-
-function PopoutHeaderButton() {
-    const channelState = useStateFromStores(
-        [SelectedChannelStore, ChannelSectionStore, ChannelStore, PopoutWindowStore],
-        () => {
-            const channelId = getMainChatChannelId();
-            const channel = channelId ? ChannelStore.getChannel(channelId) : null;
-
-            return {
-                channel,
-                isOpen: channel ? isPopoutWindowOpen(channel.id) : false,
-                label: getChannelTitle(channel)
-            };
-        },
-        []
-    );
-
-    if (!channelState.channel || !canOpenPopout(channelState.channel)) return null;
-
-    const { channel, isOpen, label } = channelState;
-
-    return (
-        <HeaderBarButton
-            key={`${channel.id}-${isOpen ? "open" : "closed"}`}
-            icon={isOpen ? XSmallIcon : WindowLaunchIcon}
-            tooltip={isOpen ? "Close popout chat" : `Popout chat for ${label}`}
-            aria-label="Popout chat"
-            selected={isOpen}
-            onClick={() => openPopout(channel.id)}
-        />
-    );
-}
-
-const WrappedPopoutHeaderButton = ErrorBoundary.wrap(PopoutHeaderButton, { noop: true });
 
 function PopoutPersistenceSync() {
     const openWindowKeySignature = useStateFromStores(
