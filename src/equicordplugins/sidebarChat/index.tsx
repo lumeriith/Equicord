@@ -467,6 +467,22 @@ export default definePlugin({
     tags: ["Appearance", "Chat", "Servers"],
     dependencies: ["HeaderBarAPI", "SurfaceClassesAPI"],
     patches: [
+        // The host's Visual Refresh patch can miss the separately loaded guild renderer.
+        // Keep Discord's own window controls available only for frameless Equibop windows.
+        {
+            find: '"refresh-title-bar-small"',
+            predicate: () => shouldUseDiscordTitleBar(),
+            replacement: [
+                {
+                    match: /\i===\i\.PlatformTypes\.WINDOWS/g,
+                    replace: "true"
+                },
+                {
+                    match: /\i===\i\.PlatformTypes\.WEB/g,
+                    replace: "false"
+                }
+            ]
+        },
         {
             find: 'case"pendingFriends":',
             group: true,
