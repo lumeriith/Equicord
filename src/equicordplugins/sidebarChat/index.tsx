@@ -483,6 +483,15 @@ export default definePlugin({
                 }
             ]
         },
+        // The guild renderer can also miss the host's window-action bridge patch.
+        {
+            find: ",setSystemTrayApplications",
+            predicate: () => isGuildWindow && shouldUseDiscordTitleBar(),
+            replacement: {
+                match: /\i\.window\.(close|minimize|maximize)/g,
+                replace: "VesktopNative.win.$1"
+            }
+        },
         {
             find: 'case"pendingFriends":',
             group: true,
