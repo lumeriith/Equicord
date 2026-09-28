@@ -215,14 +215,25 @@ function handleMiddleClick(event: ReactMouseEvent<HTMLElement>) {
         return;
     }
 
-    if (!IS_EQUIBOP || isGuildWindow || !settings.plain.middleClickGuildWindow || event.button !== MIDDLE_CLICK) return;
-    const openGuild = VesktopNative?.win?.openOrFocusGuild;
-    if (typeof openGuild !== "function") return;
+    if (event.button !== MIDDLE_CLICK) return;
+    const path = event.nativeEvent.composedPath();
+    if (!path.some(target => target instanceof HTMLElement && target.getAttribute("data-list-id") === "guildsnav")) return;
 
-    for (const target of event.nativeEvent.composedPath()) {
+    for (const target of path) {
         if (!(target instanceof HTMLElement)) continue;
         const match = /^guildsnav___(\d+)$/.exec(target.getAttribute("data-list-item-id") ?? "");
-        if (!match || !GuildStore.getGuild(match[1])) continue;
+        if (!match) continue;
+
+        // Discord places unread DM channel icons in the guild rail with the same ID prefix as servers.
+        const dm = ChannelStore.getChannel(match[1]);
+        if (dm?.isPrivate() && settings.plain.middleClickPopout) {
+            handleChannelMiddleClick(event, dm);
+            return;
+        }
+
+        if (!IS_EQUIBOP || isGuildWindow || !settings.plain.middleClickGuildWindow || !GuildStore.getGuild(match[1])) return;
+        const openGuild = VesktopNative?.win?.openOrFocusGuild;
+        if (typeof openGuild !== "function") return;
         if (consumeMiddleClick(event)) {
             void openGuild(match[1]).catch(() => showToast("Could not open the server window.", Toasts.Type.FAILURE));
         }
