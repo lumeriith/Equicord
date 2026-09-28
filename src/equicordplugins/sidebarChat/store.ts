@@ -14,6 +14,8 @@ interface IFlux extends TFlux {
     PersistedStore: TFlux["Store"];
 }
 
+const isGuildWindow = IS_EQUIBOP && VesktopNative?.win?.isGuildWindow?.() === true;
+
 export const settings = definePluginSettings({
     persistSidebar: {
         type: OptionType.BOOLEAN,
@@ -25,11 +27,17 @@ export const settings = definePluginSettings({
         description: "Open channels, threads, and direct messages in popouts with middle click.",
         default: true,
     },
+    middleClickGuildWindow: {
+        type: OptionType.BOOLEAN,
+        description: "On Equibop with guild-window support, middle-click a server icon to open its full Discord view in a separate window.",
+        default: false,
+    },
     persistPopoutWindows: {
         type: OptionType.BOOLEAN,
         description: "Restore open popout chats after Discord restarts.",
         default: true,
         onChange: value => {
+            if (isGuildWindow) return;
             if (!value) {
                 settings.store.persistedPopoutWindowIds = [];
                 return;
@@ -139,6 +147,7 @@ export function getOpenPopoutChannelIds() {
 }
 
 export function syncPersistedPopoutWindows() {
+    if (isGuildWindow) return;
     if (!settings.store.persistPopoutWindows) {
         settings.store.persistedPopoutWindowIds = [];
         return;

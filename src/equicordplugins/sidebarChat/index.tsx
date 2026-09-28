@@ -65,6 +65,7 @@ let threadSidebarOwnerWindow: Window | null = null;
 const Native = IS_EQUIBOP
     ? VencordNative.pluginHelpers.SidebarChat as PluginNative<typeof import("./native")> | undefined
     : undefined;
+const isGuildWindow = IS_EQUIBOP && VesktopNative?.win?.isGuildWindow?.() === true;
 
 const HeaderBar = findComponentByCodeLazy("toolbarClassName:", "}),onDoubleClick:");
 const ForumView = findComponentByCodeLazy("sidebarState");
@@ -208,7 +209,25 @@ function handleChannelMiddleClick(event: ReactMouseEvent<HTMLElement>, channel: 
 }
 
 function handleMiddleClick(event: ReactMouseEvent<HTMLElement>) {
-    handleChannelMiddleClick(event, getMiddleClickChannel(event));
+    const channel = getMiddleClickChannel(event);
+    if (channel) {
+        handleChannelMiddleClick(event, channel);
+        return;
+    }
+
+    if (!IS_EQUIBOP || isGuildWindow || !settings.plain.middleClickGuildWindow || event.button !== MIDDLE_CLICK) return;
+    const openGuild = VesktopNative?.win?.openOrFocusGuild;
+    if (typeof openGuild !== "function") return;
+
+    for (const target of event.nativeEvent.composedPath()) {
+        if (!(target instanceof HTMLElement)) continue;
+        const match = /^guildsnav___(\d+)$/.exec(target.getAttribute("data-list-item-id") ?? "");
+        if (!match || !GuildStore.getGuild(match[1])) continue;
+        if (consumeMiddleClick(event)) {
+            void openGuild(match[1]).catch(() => showToast("Could not open the server window.", Toasts.Type.FAILURE));
+        }
+        return;
+    }
 }
 
 function handleUserMiddleClick(event: ReactMouseEvent<HTMLElement>, userId: string) {
@@ -595,7 +614,7 @@ export default definePlugin({
         removeMiddleClickSurfaceProps?.();
         removeMiddleClickSurfaceProps = null;
         clearPersistedPopoutRestoreLoop();
-        syncPersistedPopoutWindows();
+        if (!isGuildWindow) syncPersistedPopoutWindows();
         for (const windowKey of getOpenPopoutWindowKeys()) {
             PopoutActions.close(windowKey);
         }
@@ -603,7 +622,7 @@ export default definePlugin({
 
     start() {
         removeMiddleClickSurfaceProps = addSurfacePropsProvider("base", provideMiddleClickSurfaceProps);
-        restorePersistedPopouts();
+        if (!isGuildWindow) restorePersistedPopouts();
     },
 
     handleChannelMiddleClick(event: ReactMouseEvent<HTMLElement>, channel: Channel) {
@@ -869,7 +888,7 @@ function PopoutPersistenceSync() {
     );
 
     useEffect(() => {
-        if (restoringPersistedPopouts) return;
+        if (isGuildWindow || restoringPersistedPopouts) return;
         syncPersistedPopoutWindows();
     }, [openWindowKeySignature]);
 
