@@ -23,7 +23,9 @@ const getPatch = find => {
 };
 const messagePatch = getPatch('notif_type:"MESSAGE_CREATE",notif_user_id:');
 const wrapperPatch = getPatch('type:"NOTIFICATION_CREATE"');
-const utilityPatches = getPatch("NOTIFICATIONS_RECEIVED_RESPONSE").elements;
+const utilityPatch = patches.find(p => value(p, "find")?.text?.includes("NOTIFICATIONS_RECEIVED_RESPONSE"));
+assert(utilityPatch);
+const utilityPatches = value(utilityPatch, "replacement").elements;
 const canonicalize = regex => new RegExp(regex.source.replaceAll(/(\\*)\\i/g, (match, escapes) =>
     escapes.length % 2 ? match.slice(1) : `${escapes}(?:[A-Za-z_$][\\w$]*)`
 ), regex.flags);
@@ -37,15 +39,51 @@ const replace = (text, node) => {
 // showNotification, NotificationUtils). Optionally check against a saved complete
 // Discord bundle as well: node scripts/testSidebarNotificationRouting.mjs bundle.js
 const realBundle = process.argv[2] && readFileSync(process.argv[2], "utf8");
+let realPatched;
+if (realBundle) {
+    // Webpack patches match *factory source*, not the concatenated chunk. The
+    // patcher consumes a non-`all` patch on the FIRST factory matching `find`,
+    // even when its replacements miss. The old broad IPC-name find matched the
+    // earlier constants factory and silently skipped the notification utility.
+    const boundaries = [...realBundle.matchAll(/},(\d+)\(e,t,n\)\{/g)];
+    const factories = boundaries.map((match, index) => ({
+        id: match[1],
+        source: realBundle.slice(match.index + match[0].length, boundaries[index + 1]?.index ?? realBundle.length)
+    }));
+    const getFirstFactory = find => factories.find(factory => factory.source.includes(find));
+    const oldBroadMatch = getFirstFactory("NOTIFICATIONS_RECEIVED_RESPONSE");
+    assert(oldBroadMatch && !oldBroadMatch.source.includes('l.onclick=e=>'),
+        "bundle no longer reproduces the original constants-first patch miss");
+    const checkFactory = (find, replacements, marker) => {
+        const factory = getFirstFactory(find);
+        assert(factory, `no factory contains ${find}`);
+        assert(factory.source.includes(marker), `patch ${find} consumed by wrong factory ${factory.id}`);
+        let patched = factory.source;
+        const stages = [];
+        for (const replacement of replacements) {
+            patched = replace(patched, replacement);
+            stages.push(patched);
+        }
+        // A valid patch must compile as a Webpack factory, not just parse as a
+        // whole chunk after accidentally replacing a different module.
+        new vm.Script(`0,function(e,t,n){${patched}}`);
+        return stages;
+    };
+    const [message] = checkFactory('notif_type:"MESSAGE_CREATE",notif_user_id:', [messagePatch], 'clickedNotification()');
+    const [wrapper] = checkFactory('type:"NOTIFICATION_CREATE"', [wrapperPatch], 'showNotification(e,t,n,r,a)');
+    const utility = checkFactory(value(utilityPatch, "find").text, utilityPatches, 'l.onclick=e=>');
+    assert.match(utility[2], /return r\.onClick\?\.\(r\.vcSidebarChatNotificationClick\?e:""\)/);
+    realPatched = { message, wrapper, native: utility[0], htmlFocus: utility[1], html: utility[2] };
+}
 const message = realBundle ?? 'notif_type:"MESSAGE_CREATE",notif_user_id:a.author?.id,channel_id:d.id,guild_id:d.guild_id,{onClick(){(0,D.iN)(d.id),(d.type===ee.rbe.GUILD_VOICE||d.type===ee.rbe.GUILD_STAGE_VOICE)&&c.A.updateChatOpen(d.id,!0),_.default.clickedNotification()},isUserAvatar:!0}';
 const wrapper = realBundle ?? 'showNotification(e,t,n,r,a){i.h.dispatch({type:"NOTIFICATION_CREATE",icon:e,title:t,body:n,trackingProps:r,options:{...a,onClick(e){a.onClick?.(e),i.h.dispatch({type:"NOTIFICATION_CLICK"})}}})}';
 const native = realBundle ?? 'if(L.isPlatformEmbedded?y.Ay.focus():window.focus(),null!=e){e.options?.onClick?.(i)}';
 const html = realBundle ?? 'l.onclick=e=>{L.isPlatformEmbedded?y.Ay.focus():(window.focus(),l.close()),r.omitClickTracking||(C.default.track(D.HAw.NOTIFICATION_ACTION,{action:"CLICK",...i}),C.default.track(D.HAw.NOTIFICATION_CLICKED,p)),r.onClick?.("")}';
-const patchedMessage = replace(message, messagePatch);
-const patchedWrapper = replace(wrapper, wrapperPatch);
-const patchedNative = replace(native, utilityPatches[0]);
-const patchedHtmlFocus = replace(html, utilityPatches[1]);
-const patchedHtml = replace(patchedHtmlFocus, utilityPatches[2]);
+const patchedMessage = realPatched?.message ?? replace(message, messagePatch);
+const patchedWrapper = realPatched?.wrapper ?? replace(wrapper, wrapperPatch);
+const patchedNative = realPatched?.native ?? replace(native, utilityPatches[0]);
+const patchedHtmlFocus = realPatched?.htmlFocus ?? replace(html, utilityPatches[1]);
+const patchedHtml = realPatched?.html ?? replace(patchedHtmlFocus, utilityPatches[2]);
 assert.match(patchedMessage, /routeNotificationClick\(d\.id,d\.guild_id\?\?null/);
 assert.match(patchedWrapper, /return i\.h\.dispatch\(\{type:"NOTIFICATION_CLICK"\}\),vcSidebarChatResult/);
 assert.match(patchedNative, /shouldDeferNotificationFocus\(e\?\.options\)/);

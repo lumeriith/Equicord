@@ -522,7 +522,10 @@ export default definePlugin({
         // Defer that focus for marked message clicks, otherwise it steals focus back from
         // an existing popout/guild window after the host has selected it.
         {
-            find: "NOTIFICATIONS_RECEIVED_RESPONSE",
+            // The bare IPC name also appears in Discord's earlier constants module.
+            // Anchor to the notification utility's listener so this patch is not
+            // consumed before its click handlers are defined.
+            find: '.on("NOTIFICATIONS_RECEIVED_RESPONSE"',
             predicate: () => IS_EQUIBOP,
             replacement: [
                 {
