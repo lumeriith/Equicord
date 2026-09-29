@@ -80,11 +80,14 @@ function shouldDeferNotificationFocus(options?: { vcSidebarChatNotificationClick
 }
 
 function routeNotificationClick(channelId: string, guildId: string | null, onClick: () => void) {
-    return async () => {
+    return async (event?: Event) => {
         const focus = getNotificationTargetFocus();
         if (typeof focus === "function") {
             try {
-                if (await focus(channelId, guildId)) return;
+                if (await focus(channelId, guildId)) {
+                    if (event && typeof event === "object") Reflect.set(event, "__equibopNotificationTargetHandled", true);
+                    return;
+                }
             } catch { /* Keep Discord's original click action on host failure. */ }
         }
 
@@ -505,6 +508,16 @@ export default definePlugin({
                 replace: "vcSidebarChatNotificationClick:true,onClick:$self.routeNotificationClick($2.id,$2.guild_id??null,()=>{$1}),isUserAvatar:"
             }
         },
+        // The showNotification wrapper must forward the channel callback's Promise through
+        // its synchronous click-tracking dispatch to the host Notification.onclick handler.
+        {
+            find: 'type:"NOTIFICATION_CREATE"',
+            predicate: () => IS_EQUIBOP,
+            replacement: {
+                match: /onClick\((\i)\)\{(\i)\.onClick\?\.\(\1\),(\i\.\i\.dispatch\(\{type:"NOTIFICATION_CLICK"\}\))\}/,
+                replace: "onClick($1){let vcSidebarChatResult=$2.onClick?.($1);return $3,vcSidebarChatResult}"
+            }
+        },
         // Discord's notification utility focuses the main window before invoking onClick.
         // Defer that focus for marked message clicks, otherwise it steals focus back from
         // an existing popout/guild window after the host has selected it.
@@ -517,8 +530,15 @@ export default definePlugin({
                     replace: "($self.shouldDeferNotificationFocus($2?.options)?void 0:$1),null!=$2"
                 },
                 {
-                    match: /(\i\.isPlatformEmbedded\?\i\.\i\.focus\(\):\(window\.focus\(\),(\i)\.close\(\)\)),(\i)\.omitClickTracking/,
-                    replace: "($self.shouldDeferNotificationFocus($3)?$2.close():$1),$3.omitClickTracking"
+                    match: /((\i)\.isPlatformEmbedded\?\i\.\i\.focus\(\):\(window\.focus\(\),(\i)\.close\(\)\)),(\i)\.omitClickTracking/,
+                    replace: "($self.shouldDeferNotificationFocus($4)?($2.isPlatformEmbedded?void 0:$3.close()):$1),$4.omitClickTracking"
+                },
+                {
+                    // The HTML utility passes an empty string rather than its click event.
+                    // Forward the event only for routed messages; return the Promise so the
+                    // host can wait for the focus-only lookup before deciding to focus main.
+                    match: /(\i)\.onclick=(\i)=>\{(.{0,550}?),\s*(\i)\.onClick\?\.\(""\)\}/,
+                    replace: '$1.onclick=$2=>{$3;return $4.onClick?.($4.vcSidebarChatNotificationClick?$2:"")}'
                 }
             ]
         },
