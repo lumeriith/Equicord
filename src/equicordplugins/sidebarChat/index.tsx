@@ -67,6 +67,34 @@ const Native = IS_EQUIBOP
     : undefined;
 const isGuildWindow = IS_EQUIBOP && VesktopNative?.win?.isGuildWindow?.() === true;
 
+// The host implements this as a focus-only lookup: never create a window for a notification.
+function getNotificationTargetFocus() {
+    if (!IS_EQUIBOP) return;
+    return (VesktopNative?.win as typeof VesktopNative.win & {
+        focusExistingNotificationTarget?: (channelId: string, guildId: string | null) => Promise<boolean>;
+    } | undefined)?.focusExistingNotificationTarget;
+}
+
+function shouldDeferNotificationFocus(options?: { vcSidebarChatNotificationClick?: boolean; }) {
+    return options?.vcSidebarChatNotificationClick === true && typeof getNotificationTargetFocus() === "function";
+}
+
+function routeNotificationClick(channelId: string, guildId: string | null, onClick: () => void) {
+    return async () => {
+        const focus = getNotificationTargetFocus();
+        if (typeof focus === "function") {
+            try {
+                if (await focus(channelId, guildId)) return;
+            } catch { /* Keep Discord's original click action on host failure. */ }
+        }
+
+        // HTML notifications skip the utility's eager main focus while routing is available.
+        // For native notifications the host must focus main before reporting a miss.
+        window.focus();
+        onClick();
+    };
+}
+
 const HeaderBar = findComponentByCodeLazy("toolbarClassName:", "}),onDoubleClick:");
 const ForumView = findComponentByCodeLazy("sidebarState");
 
@@ -467,6 +495,33 @@ export default definePlugin({
     tags: ["Appearance", "Chat", "Servers"],
     dependencies: ["HeaderBarAPI", "SurfaceClassesAPI"],
     patches: [
+        // NotificationStore's MESSAGE_CREATE supplies the actual notified channel (including
+        // threads). Preserve Discord's original navigation as the no-match/error fallback.
+        {
+            find: 'notif_type:"MESSAGE_CREATE",notif_user_id:',
+            predicate: () => IS_EQUIBOP,
+            replacement: {
+                match: /onClick\(\)\{(\(0,\i\.\i\)\((\i)\.id\),\(\2\.type===\i\.\i\.GUILD_VOICE.{0,250}\.clickedNotification\(\))\},isUserAvatar:/,
+                replace: "vcSidebarChatNotificationClick:true,onClick:$self.routeNotificationClick($2.id,$2.guild_id??null,()=>{$1}),isUserAvatar:"
+            }
+        },
+        // Discord's notification utility focuses the main window before invoking onClick.
+        // Defer that focus for marked message clicks, otherwise it steals focus back from
+        // an existing popout/guild window after the host has selected it.
+        {
+            find: "NOTIFICATIONS_RECEIVED_RESPONSE",
+            predicate: () => IS_EQUIBOP,
+            replacement: [
+                {
+                    match: /(\i\.isPlatformEmbedded\?\i\.\i\.focus\(\):window\.focus\(\)),null!=(\i)/,
+                    replace: "($self.shouldDeferNotificationFocus($2?.options)?void 0:$1),null!=$2"
+                },
+                {
+                    match: /(\i\.isPlatformEmbedded\?\i\.\i\.focus\(\):\(window\.focus\(\),(\i)\.close\(\)\)),(\i)\.omitClickTracking/,
+                    replace: "($self.shouldDeferNotificationFocus($3)?$2.close():$1),$3.omitClickTracking"
+                }
+            ]
+        },
         // The host's Visual Refresh patch can miss the separately loaded guild renderer.
         // Keep Discord's own window controls available only for frameless Equibop windows.
         {
@@ -624,6 +679,8 @@ export default definePlugin({
     },
 
     shouldUseDiscordTitleBar,
+    routeNotificationClick,
+    shouldDeferNotificationFocus,
     isPopoutWindowOpen,
 
     requestPopoutFrame(channelId: string) {
