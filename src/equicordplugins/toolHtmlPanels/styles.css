@@ -1,4 +1,4 @@
-.vc-lufria-panel-root {
+.vc-tool-panel-root {
     display: inline-flex;
     flex-direction: column;
     align-items: flex-start;
@@ -6,7 +6,7 @@
     max-width: 100%;
 }
 
-.vc-lufria-panel-summary {
+.vc-tool-panel-summary {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -20,83 +20,86 @@
     cursor: pointer;
 }
 
-.vc-lufria-panel-summary:hover {
+.vc-tool-panel-summary:hover {
     color: var(--text-normal);
 }
 
-.vc-lufria-panel-chevron {
+.vc-tool-panel-chevron {
     display: inline-block;
     transition: transform 0.1s ease-out;
 }
 
-.vc-lufria-panel-open {
+.vc-tool-panel-open {
     transform: rotate(90deg);
 }
 
-.vc-lufria-panel-error {
+.vc-tool-panel-error {
     color: var(--text-danger);
     font-size: 0.85rem;
 }
 
-.vc-lufria-panel-body {
+.vc-tool-panel-body {
     box-sizing: border-box;
     max-width: 100%;
     max-height: 60vh;
-    padding: 0;
+    padding: 8px 12px;
     overflow: auto;
+    border: 1px solid var(--background-modifier-accent);
+    border-radius: 4px;
+    background: var(--background-secondary);
     color: var(--text-normal);
     font-size: 0.875rem;
     line-height: 1.25rem;
-    /* Discord's message markup uses break-spaces, which doubles the gap at HTML newlines. */
+    /* Discord's message markup uses break-spaces, which doubles gaps at HTML newlines. */
     white-space: normal;
 
     /* Keeps panel layout and painting from leaking into the message list. */
     contain: content;
 }
 
-/* Older sealed panels used ordered lists. Flatten those into ordinary lines;
- * new panels use div rows and need no row-specific styling. */
-.vc-lufria-panel-body :where(ol, ul) {
+/* Historical panels used ordered lists as line wrappers; keep their original layout.
+ * Do not flatten lists in new generic tool panels. */
+.vc-tool-panel-root[data-panel-file="lufria-panel-v1.html"] .vc-tool-panel-body {
+    padding: 0;
+}
+
+.vc-tool-panel-root[data-panel-file="lufria-panel-v1.html"] .vc-tool-panel-body :where(ol, ul, li) {
     margin: 0;
     padding: 0;
     list-style: none;
 }
 
-.vc-lufria-panel-body li {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-}
-
-.vc-lufria-panel-body table {
+.vc-tool-panel-body table {
     border-collapse: collapse;
 }
 
-.vc-lufria-panel-body td,
-.vc-lufria-panel-body th {
+.vc-tool-panel-body td,
+.vc-tool-panel-body th {
     padding: 2px 8px;
     border: 1px solid var(--background-modifier-accent);
     text-align: left;
 }
 
-.vc-lufria-panel-body code,
-.vc-lufria-panel-body pre {
+.vc-tool-panel-body code,
+.vc-tool-panel-body pre {
     font-family: var(--font-code);
 }
 
-.vc-lufria-panel-body pre {
+.vc-tool-panel-body pre {
     margin: 0;
     white-space: pre-wrap;
 }
 
-.vc-lufria-panel-body a {
+.vc-tool-panel-body a {
     color: var(--text-link);
 }
 
 /* Discord retains V2 uploads only through a visible File component. In modded
  * clients, the marked disclosure replaces that specific file tile. Stock
  * clients still show the compact text fallback plus a downloadable file. */
-div[class*="isComponentsV2"]:has(.vc-lufria-panel-root)
+div[class*="isComponentsV2"]:has(.vc-tool-panel-root[data-panel-file="tool-panel-v1.html"])
+    > div[class*="fileDisplayContainer"]:has(a[href*="/tool-panel-v1.html"]),
+div[class*="isComponentsV2"]:has(.vc-tool-panel-root[data-panel-file="lufria-panel-v1.html"])
     > div[class*="fileDisplayContainer"]:has(a[href*="/lufria-panel-v1.html"]) {
     display: none;
 }
